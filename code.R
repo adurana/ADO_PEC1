@@ -1,50 +1,60 @@
 
+#Preparación del entorno
 
+setwd("~/Desktop/Master UOC/Semestre 3/Asignaturas/157-Analisis de datos omicos/PEC1/ADO_PEC1")
 workingDir <- getwd()
 dir.create("data")
 dir.create("results")
 dataDir <- file.path(workingDir, "data/")
 resultsDir <- file.path(workingDir, "results/")
 
+#Obtención de datos
+
+knitr::include_graphics("figuras/BusquedaGEO.png")
 
 library(GEOquery)
 
 my_gse <- getGEO(GEO = "GSE114626", destdir = dataDir)
-
 getGEOSuppFiles(GEO = "GSE114626", makeDirectory = F, baseDir = dataDir)
 
-BiocManager::install("hugene20sttranscriptcluster.db")
+targets <- read.csv2("./data/targets.csv", header = TRUE, sep = ";") 
+knitr::kable(
+  targets, booktabs = TRUE,
+  caption = 'Contenido del fichero *targets.csv* para el estudio GSE114626')
 
-
-library(pd.hugene.2.0.st)
-library(oligo)
-
-celFiles <- list.celfiles("./data", full.names = T) #get list of .cel files
-celFiles
-
+#Lectura de datos
 
 library(Biobase)
+library(oligo)
+library(pd.hugene.2.0.st)
+
+celFiles <- list.celfiles("./data", full.names = T) #get list of .cel files
 my.targets <- read.AnnotatedDataFrame(file.path("./data", "targets.csv"), 
-                                      header = T, row.names = 1,
-                                      sep = ";")
-my.targets
-
-
+                                      header = T, row.names = 1, sep = ";")
 rawData <- read.celfiles(celFiles, phenoData = my.targets) #reads .cel files
-rawData #ExpressionSet: both .cel and target in one object
 pData(rawData)
 my.targets@data$ShortName -> rownames(pData(rawData)) #change names of the samples
 colnames(rawData) <- rownames((pData(rawData)))
-head(rawData)
+rawData #ExpressionSet: both .cel and target in one object
 
+#Control de calidad de datos crudos
 
-library(arrayQualityMetrics) #AQM
-arrayQualityMetrics(rawData, outdir = file.path("./results", "QCDir.Raw")) 
+library(arrayQualityMetrics)
 
-library(ggplot2) #PCA plot
+arrayQualityMetrics(rawData, outdir = file.path("./results", "QCDir.Raw"))
+
+knitr::include_graphics("figuras/indexRaw.png")
+
+library(ggplot2)
 library(ggrepel)
-plotPCA3 <- function(datos, labels, factor, title, scale, 
-                     colores, size = 1.5, glineas = 0.25) {
+
+boxplot(rawData, cex.axis = 0.5, las=2, which="all", main="",
+        col = c(rep("red", 4), rep("blue", 4), rep("green", 4), rep("yellow", 4), rep("magenta", 4)))
+
+plot(hclust(dist(t(exprs(rawData)))))
+
+plotPCA <- function(datos, labels, factor, scale, 
+                    colores, size = 1.5, glineas = 0.25) {
   data <- prcomp(t(datos), scale = scale)
   #plot adjustments
   dataDF <- data.frame(data$x)
@@ -58,162 +68,113 @@ plotPCA3 <- function(datos, labels, factor, title, scale,
     geom_point(aes(color = Group), alpha = 0.55, size = 3) +
     coord_cartesian(xlim = c(min(data$x[,1])-5, max(data$x[,1])+5)) +
     scale_fill_discrete(name = "Group")
-  #avoidind labels superposition
+  #avoiding labels superposition
   p1 + geom_text_repel(aes(y = PC2 + 0.25, label = labels), segment.size = 0.25, size = size) +
     labs(x = c(paste("PC1", loads[1], "%")), y = c(paste("PC2", loads[2], "%"))) +
-    ggtitle(paste("Principal Component Analysis for: ", title, sep = " ")) +
     theme(plot.title = element_text(hjust = 0.5)) +
     scale_colour_manual(values = colores)
 }
 
-plotPCA3(exprs(rawData), labels = my.targets@data$ShortName, factor = my.targets@data$CellType,
-         title = "Raw data grouped by cell type", scale = F, size = 3,
-         colores = c("red", "blue", "green", "yellow", "magenta"))
+plotPCA(exprs(rawData), labels = my.targets@data$ShortName, factor = my.targets@data$Agent,
+        scale = F, size = 3, colores = c("red", "blue", "green", "yellow"))
 
-plotPCA3(exprs(rawData), labels = my.targets@data$ShortName, factor = my.targets@data$Agent,
-         title = "Raw data grouped by agent", scale = F, size = 3,
-         colores = c("red", "blue", "green", "yellow"))
+#Normalización de datos
 
-boxplot(rawData, cex.axis = 0.5, las=2, which="all", #boxplot necesario arg which
-        col = c(rep("red", 4), rep("blue", 4), rep("green", 4), rep("yellow", 4), rep("magenta", 4)),
-        main="Boxplot for arrays intensity: Raw Data")
+eset_rma <- rma(rawData)
 
-plot(hclust(dist(t(exprs(rawData)))))
-
-eset_rma <- rma(rawData) #RMA normalization (standard)
-
-#quality control of normalized data
+#Control de calidad de datos normalizados
 
 arrayQualityMetrics(eset_rma, outdir = file.path("./results", "QCDir.Norm"))
 
-plotPCA3(exprs(eset_rma), labels = my.targets@data$ShortName, factor = my.targets@data$CellType,
-         title = "Normalized data grouped by cell type", scale = F, size = 3,
-         colores = c("red", "blue", "green", "yellow", "magenta"))
+knitr::include_graphics("figuras/indexNorm.png")
 
-plotPCA3(exprs(eset_rma), labels = my.targets@data$ShortName, factor = my.targets@data$Agent,
-         title = "Normalized data grouped by agent", scale = F, size = 3,
-         colores = c("red", "blue", "green", "yellow"))
-
-boxplot(eset_rma, cex.axis = 0.5, las=2, which="all", #boxplot necesario arg which
-        col = c(rep("red", 4), rep("blue", 4), rep("green", 4), rep("yellow", 4), rep("magenta", 4)),
-        main="Boxplot for arrays intensity: Normalized Data")
+boxplot(eset_rma, cex.axis = 0.5, las=2, which="all",
+        col = c(rep("red", 4), rep("blue", 4), rep("green", 4), rep("yellow", 4), rep("magenta", 4)))
 
 plot(hclust(dist(t(exprs(eset_rma)))))
 
+plotPCA(exprs(eset_rma), labels = my.targets@data$ShortName, factor = my.targets@data$Agent,
+        scale = F, size = 3, colores = c("red", "blue", "green", "yellow"))
 
-#NO funciona y no necesario
-library(affyio)
-get.celfile.dates(celFiles)
+#Detección de los genes más variables
 
-pData(eset_rma)
-pData(my.targets)
-
-targets <- read.csv2("./data/targets.csv", header = T, sep = ";")
-
-pData(targets)
-
-library(pvca)
-pData(eset_rma)
-pData(eset_rma) <- targets
-#select the threshold
-pct_threshold <- 0.6
-#select the factor to analyze
-batch.factors <- c("Agent")
-#run the analysis
-pvcaObj <- pvcaBatchAssess(eset_rma, batch.factors, pct_threshold)
-
-pvcaObj$dat
-
-#plot
-bp <- barplot(pvcaObj$dat, xlab = "Effects",
-              ylab = "Weighed average proportion variance",
-              ylim = c(0, 1.1), col = c("mediumorchid"), las = 2,
-              main = "PVCA estimation")
-axis(1, at = bp, labels = pvcaObj$label, cex.axis = 0.75, las = 2)
-values <- round(pvcaObj$dat, 3)
-text(bp, pvcaObj$dat, labels = values, pos=3, cex = 0.7)
-
-#OK from here
-
-#detecting most variable genes
-
-sds <- apply(exprs(eset_rma), 1, sd) #plot of standard deviations
+sds <- apply(exprs(eset_rma), 1, sd)
 sds0 <- sort(sds)
-plot(1:length(sds0), sds0, main="Distribution of variability for all genes",
-     sub="Vertical lines represent 90% and 95% percentiles",
-     xlab="Gene index (from least to most variable)", ylab="Standard deviation")
+plot(1:length(sds0), sds0, xlab="Genes desde el menos al más variable", ylab="Desviación estándar")
 abline(v=length(sds)*c(0.9,0.95))
 
-#filtering least variable genes
+#Filtrado de genes
 
 library(genefilter)
 library(hugene20sttranscriptcluster.db)
+
 annotation(eset_rma) <- "hugene20sttranscriptcluster.db"
 filtered <- nsFilter(eset_rma,
                      require.entrez = T, remove.dupEntrez = T,
                      var.filter = T, var.func = IQR, var.cutoff = 0.75,
                      filterByQuantile = T, feature.exclude = "^AFFX")
-print(filtered$filter.log)
 
 eset_filtered <- filtered$eset
-eset_filtered
-eset_rma
+
+#Control de calidad de datos filtrados
+
+arrayQualityMetrics(eset_filtered, outdir = file.path("./results", "QCDir.Filt"))
+
+knitr::include_graphics("figuras/indexFilt.png")
+
+boxplot(eset_filtered, cex.axis = 0.5, las=2, which="all",
+        col = c(rep("red", 4), rep("blue", 4), rep("green", 4), rep("yellow", 4), rep("magenta", 4)))
 
 plot(hclust(dist(t(exprs(eset_filtered)))))
 
-plotPCA3(exprs(eset_filtered), labels = my.targets@data$ShortName, factor = my.targets@data$Agent,
-         title = "Filtered data grouped by agent", scale = F, size = 3,
-         colores = c("red", "blue", "green", "yellow"))
-
-boxplot(eset_filtered, cex.axis = 0.5, las=2, which="all", #boxplot necesario arg which
-        col = c(rep("red", 4), rep("blue", 4), rep("green", 4), rep("yellow", 4), rep("magenta", 4)),
-        main="Boxplot for arrays intensity: Filtered Data")
-
-#saving normalized and filterd data
+plotPCA(exprs(eset_filtered), labels = my.targets@data$ShortName, factor = my.targets@data$Agent,
+        scale = F, size = 3, colores = c("red", "blue", "green", "yellow"))
 
 write.csv(exprs(eset_rma), file = "./results/normalized.Data.csv")
-write.csv(exprs(eset_filtered), file = "./results/normalized.Filtered.Data.csv")
-save(eset_rma, eset_filtered, file = "./results/normalized.Data.Rda")
+write.csv(exprs(eset_filtered), file = "./results/filtered.Data.csv")
+save(eset_rma, eset_filtered, file = "./results/normalized.filtered.Data.Rda")
 
-#defining the experimental setup: the design matrix
-#linear models for microarrays method (limma)
+#Diseño experimental
 
-if(!exists("eset_filtered")) load(file = "./results/normalized.Data.Rda")
 library(limma)
-designMat <- model.matrix(~0+Agent, pData(eset_filtered)) #design matrix
+
+designMat <- model.matrix(~0+Agent, pData(eset_filtered))
 colnames(designMat) <- c("DMSO", "Meta", "Ortho", "Para")
-print(designMat)
+
+designMat
 
 cont.matrix <- makeContrasts(PvsO = Para-Ortho,
                              PvsM = Para-Meta,
                              PvsD = Para-DMSO,
                              levels = designMat)
-print(cont.matrix)
 
-#model estimation and gene selection
+cont.matrix
 
-library(limma)
+#Modelización y selección de genes
+
 fit <- lmFit(eset_filtered, designMat)
 fit.main <- contrasts.fit(fit, cont.matrix)
 fit.main <- eBayes(fit.main)
-class(fit.main)
 
-
-#obtaining lists of differentially expressed genes
+#Listado de genes diferencialmente expresados
 
 topTab_PvsO <- topTable(fit.main, number = nrow(fit.main),
-                               coef="PvsO", adjust="fdr")
-head(topTab_PvsO)
+                        coef="PvsO", adjust="fdr")
 
 topTab_PvsM <- topTable(fit.main, number = nrow(fit.main),
-                             coef="PvsM", adjust="fdr")
-head(topTab_PvsM)
+                        coef="PvsM", adjust="fdr")
 
 topTab_PvsD <- topTable(fit.main, number = nrow(fit.main),
-                       coef="PvsD", adjust="fdr")
+                        coef="PvsD", adjust="fdr")
+
+head(topTab_PvsO)
+
+head(topTab_PvsM)
+
 head(topTab_PvsD)
 
-#gene annotation
+
+#Anotación de genes
 
 annotatedTopTable <- function(topTab, anotPackage)
 {
@@ -226,97 +187,91 @@ annotatedTopTable <- function(topTab, anotPackage)
 }
 
 topAnnotated_PvsO <- annotatedTopTable(topTab_PvsO,
-                                            anotPackage = "hugene20sttranscriptcluster.db")
-write.csv(topAnnotated_PvsO, file="./results/topAnnotated_PvsO.csv")
-
-head(topAnnotated_PvsO, 5)
+                                       anotPackage = "hugene20sttranscriptcluster.db")
 
 topAnnotated_PvsM <- annotatedTopTable(topTab_PvsM,
-                                              anotPackage = "hugene20sttranscriptcluster.db")
-write.csv(topAnnotated_PvsM, file="./results/topAnnotated_PvsM.csv")
-
-head(topAnnotated_PvsM, 5)
+                                       anotPackage = "hugene20sttranscriptcluster.db")
 
 topAnnotated_PvsD <- annotatedTopTable(topTab_PvsD,
-                                      anotPackage = "hugene20sttranscriptcluster.db")
+                                       anotPackage = "hugene20sttranscriptcluster.db")
+
+head(topAnnotated_PvsO)
+head(topAnnotated_PvsM)
+head(topAnnotated_PvsD)
+
+write.csv(topAnnotated_PvsO, file="./results/topAnnotated_PvsO.csv")
+write.csv(topAnnotated_PvsM, file="./results/topAnnotated_PvsM.csv")
 write.csv(topAnnotated_PvsD, file="./results/topAnnotated_PvsD.csv")
 
-head(topAnnotated_PvsD, 5)
-
-#visualizing differential expression
+#Visualización de la expresión diferencial
 
 library(hugene20sttranscriptcluster.db)
+
 geneSymbols <- select(hugene20sttranscriptcluster.db, rownames(fit.main), c("SYMBOL"))
 SYMBOLS <- geneSymbols$SYMBOL
-volcanoplot(fit.main, coef = 1, highlight = 4, names = SYMBOLS,
-            main=paste("Differentially expressed genes", colnames(cont.matrix)[1], sep="\n"))
+
+volcanoplot(fit.main, coef = 1, highlight = 4, names = SYMBOLS)
 abline(v=c(-1,1))
 
-#multiple comparisons
+volcanoplot(fit.main, coef = 2, highlight = 4, names = SYMBOLS)
+abline(v=c(-1,1))
 
-library(limma)
+volcanoplot(fit.main, coef = 3, highlight = 4, names = SYMBOLS)
+abline(v=c(-1,1))
+
+#Comparaciones múltiples
+
+library(gplots)
+
 res <- decideTests(fit.main, method = "separate", adjust.method = "fdr", p.value = 0.1, lfc = 1)
 sum.res.rows <- apply(abs(res),1,sum)
 res.selected <- res[sum.res.rows!=0,]
 print(summary(res))
 
 vennDiagram(res.selected[,1:3], cex=0.8)
-title("Genes in common between the three comparisons\n Genes selected with FDR < 0.1 and logFC >1")
-
-#heatmaps
 
 probesInHeatmap <- rownames(res.selected)
 HMdata <- exprs(eset_filtered)[rownames(exprs(eset_filtered)) %in% probesInHeatmap,]
 geneSymbols <- select(hugene20sttranscriptcluster.db, rownames(HMdata), c("SYMBOL"))
 SYMBOLS <- geneSymbols$SYMBOL
 rownames(HMdata) <- SYMBOLS
+my_palette <- colorRampPalette(c("blue", "red"))(n =299)
+
 write.csv(HMdata, file=file.path("./results/data4Heatmap.csv"))
 
-my_palette <- colorRampPalette(c("blue", "red"))(n =299)
-library(gplots)
-dev.off()
-heatmap.2(HMdata, Rowv = F, Colv = F,
-          main = "Differentially expressed genes \n FDR < 0.1, logFC >=1.0",
-          scale = "row", col = my_palette, sepcolor = "white",
-          sepwidth = c(0.05,0.05), cexRow = 0.5, cexCol = 0.9,
-          key = F, density.info = "histogram",
-          ColSideColors = c(rep("red", 4), rep("blue", 4), rep("green", 4), rep("yellow", 4), rep("magenta", 4)),
-          tracecol = NULL, dendrogram = "none", srtCol = 30)
-
 heatmap.2(HMdata, Rowv = T, Colv = T,
-          main = "Differentially expressed genes \n FDR < 0.1, logFC >=1",
           scale = "row", col = my_palette, sepcolor = "white",
           sepwidth = c(0.05,0.05), cexRow = 0.5, cexCol = 0.9,
           key = F, density.info = "histogram",
           ColSideColors = c(rep("red", 4), rep("blue", 4), rep("green", 4), rep("yellow", 4), rep("magenta", 4)),
           tracecol = NULL, dendrogram = "both", srtCol = 30)
 
-#biological significance of resultsv (reactomePA)
+#Significación biológica de los resultados
+
 library(org.Hs.eg.db)
+library(ReactomePA)
+
 listOfTables <- list(PvsO = topTab_PvsO,
                      PvsM = topTab_PvsM,
                      PvsD = topTab_PvsD)
+
 listOfSelected <- list()
+
 for(i in 1:length(listOfTables)){
-  #select the toptable
   topTab <- listOfTables[[i]]
-  #select the genes to be icluded in the analysis
   whichGenes <- topTab["adj.P.Val"]<0.15
   selectedIDs <- rownames(topTab)[whichGenes]
-  #convert the IDD to Entrez
   EntrezIDs <- select(hugene20sttranscriptcluster.db, selectedIDs, c("ENTREZID"))
   EntrezIDs <- EntrezIDs$ENTREZID
   listOfSelected[[i]] <- EntrezIDs
   names(listOfSelected)[i] <- names(listOfTables)[i]
 }
+
 sapply(listOfSelected, length)
 
 mapped_genes2GO <- mappedkeys(org.Hs.egGO)
 mapped_genes2KEGG <- mappedkeys(org.Hs.egPATH)
 mapped_genes <- union(mapped_genes2GO, mapped_genes2KEGG)
-
-library(ReactomePA)
-
 
 listOfData <- listOfSelected[1:3]
 comparisonsNames <- names(listOfData)
@@ -331,36 +286,51 @@ for (i in 1:length(listOfData)) {
                                  pAdjustMethod = "BH",
                                  organism = "human",
                                  universe = universe)
-  cat("#############################")
-  cat("\nComparison: ", comparison, "\n")
-  print(head(enrich.result))
-  
-  if(length(rownames(enrich.result@result))!=0) {
-    write.csv(as.data.frame(enrich.result),
-              file=paste0("./results/", "ReactomePA.Results.", comparison, ".csv"),
-              row.names = F)
-    pdf(file=paste0("./results/", "ReactomePABarplot.", comparison, ".pdf"))
-    print(barplot(enrich.result, showCategory=15, font.size=4,
-                  title=paste0("Reactome Pathway Analysis for ", comparison, ". Barplot")))
-    dev.off()
-    
-    pdf(file=paste0("./results/", "ReactomePAcnetplot.", comparison, ".pdf"))
-    print(cnetplot(enrich.result, categorySize="geneNum", showCategory = 5,
-                   vertex.label.cex = 0.2))
-    dev.off()
-  }
 }
 
-cnetplot(enrich.result, categorySize = "geneNum", showCategory = 5,
+if(length(rownames(enrich.result@result))!=0) {
+  write.csv(as.data.frame(enrich.result),
+            file=paste0("./results/", "ReactomePA.Results.", comparison, ".csv"),
+            row.names = F)
+  pdf(file=paste0("./results/", "ReactomePABarplot.", comparison, ".pdf"))
+  pdf(file=paste0("./results/", "ReactomePAcnetplot.", comparison, ".pdf"))  
+}
+
+Tab.react.PvsO <- read.csv2(file.path("./results/ReactomePA.Results.PvsO.csv"), 
+                            sep = ",", header = TRUE, row.names = 1)
+
+Tab.react.PvsO <- Tab.react.PvsO[1:5, c(1,4,5)]
+knitr::kable(Tab.react.PvsO, booktabs = TRUE,
+             caption = "Inicio del listado de Reactome para la comparación PvsO")
+
+Tab.react.PvsM <- read.csv2(file.path("./results/ReactomePA.Results.PvsM.csv"), 
+                            sep = ",", header = TRUE, row.names = 1)
+
+Tab.react.PvsM <- Tab.react.PvsM[1:5, c(1,4,5)]
+knitr::kable(Tab.react.PvsM, booktabs = TRUE,
+             caption = "Inicio del listado de Reactome para la comparación PvsM")
+
+Tab.react.PvsD <- read.csv2(file.path("./results/ReactomePA.Results.PvsD.csv"), 
+                            sep = ",", header = TRUE, row.names = 1)
+
+Tab.react.PvsD <- Tab.react.PvsD[1:5, c(1,4,5)]
+knitr::kable(Tab.react.PvsD, booktabs = TRUE,
+             caption = "Inicio del listado de Reactome para la comparación PvsD")
+
+comparison <- comparisonsNames[1]
+
+barplot(enrich.result, showCategory=10, font.size=10)
+
+cnetplot(enrich.result, categorySize="geneNum", showCategory = 3,
          vertex.label.cex = 0.2)
 
+#Resumen de resultados
 
-
-
-
-
-
-
-
+listOfFiles <- dir("./results/") 
+knitr::kable(
+  listOfFiles, booktabs = TRUE,
+  caption = "Listado de ficheros generados durante el análisis",
+  col.names="ListadoFicheros"
+)
 
 
